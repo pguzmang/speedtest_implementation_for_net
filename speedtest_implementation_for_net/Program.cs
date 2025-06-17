@@ -10,7 +10,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.NetworkInformation;
-using Newtonsoft.Json.Linq;
+using System.Text.Json;
 
 namespace speedtest_implementation_for_net
 {
@@ -22,7 +22,7 @@ namespace speedtest_implementation_for_net
         private const int chunkSizeForUpload = 4 * 1000 * 1000; // approximately 4MB
         private const int totalBitsForUpload = chunkSizeForUpload * 8; // 4MB to 32 Mbits (approximately)
 
-        private static JToken serverProperties = null;
+        private static JsonElement? serverProperties;
 
         static void Main(string[] args)
         {
@@ -62,9 +62,9 @@ namespace speedtest_implementation_for_net
 
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("Server found : {0} ({1}, {2})", 
-                serverProperties["sponsor"].ToString(),
-                serverProperties["name"].ToString(),
-                serverProperties["country"].ToString()
+                serverProperties?.GetProperty("sponsor").GetString(),
+                serverProperties?.GetProperty("name").GetString(),
+                serverProperties?.GetProperty("country").GetString()
             );
 
             Console.ForegroundColor = ConsoleColor.Yellow;
@@ -119,7 +119,6 @@ namespace speedtest_implementation_for_net
             string paramsForServers = "?engine=js";
 
             HttpClient client;
-            JArray jsonServers = null;
 
             try
             {
@@ -131,9 +130,13 @@ namespace speedtest_implementation_for_net
                 if (responseMessage.IsSuccessStatusCode)
                 {
                     string responseString = await responseMessage.Content.ReadAsStringAsync();
-                    jsonServers = JArray.Parse(responseString);
-
-                    serverProperties = jsonServers[0];
+                    using (JsonDocument document = JsonDocument.Parse(responseString))
+                    {
+                        if (document.RootElement.GetArrayLength() > 0)
+                        {
+                            serverProperties = document.RootElement[0].Clone();
+                        }
+                    }
                 }
             }
             catch (Exception ex)
@@ -149,7 +152,7 @@ namespace speedtest_implementation_for_net
 
             try
             {
-                Uri hostUri = new Uri(serverProperties["url"].ToString());
+                Uri hostUri = new Uri(serverProperties?.GetProperty("url").GetString());
                 IPAddress ip = Dns.GetHostEntry(hostUri.Host).AddressList[0];
                 reply = ping.Send(ip);
             }
@@ -165,7 +168,7 @@ namespace speedtest_implementation_for_net
         {
             string guidForThisDownload = Guid.NewGuid().ToString();
             string parameterForDownload = "download?nocache={0}&size={1}";
-            string downloadUrl = "http://" + serverProperties["host"].ToString() + "/" + string.Format(parameterForDownload, guidForThisDownload, chunkSizeForDownload);
+            string downloadUrl = "http://" + serverProperties?.GetProperty("host").GetString() + "/" + string.Format(parameterForDownload, guidForThisDownload, chunkSizeForDownload);
             string cacheFilePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName()) + ".bin";
 
             int LargeBufferSize = 25 * 1024 * 1024;
@@ -213,7 +216,7 @@ namespace speedtest_implementation_for_net
         {
             string guidForThisUpload = Guid.NewGuid().ToString();
             string parameterForUpload = "upload?nocache={0}";
-            string uploadUrl = "http://" + serverProperties["host"].ToString() + "/" + string.Format(parameterForUpload, guidForThisUpload);
+            string uploadUrl = "http://" + serverProperties?.GetProperty("host").GetString() + "/" + string.Format(parameterForUpload, guidForThisUpload);
             string cacheFilePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName()) + ".bin";
 
             int LargeBufferSize = 25 * 1024 * 1024;
@@ -227,7 +230,7 @@ namespace speedtest_implementation_for_net
             {
                 using (var httpClient = new HttpClient())
                 {
-                    httpClient.BaseAddress = new Uri("http://" + serverProperties["host"].ToString());
+                    httpClient.BaseAddress = new Uri("http://" + serverProperties?.GetProperty("host").GetString());
                     httpClient.MaxResponseContentBufferSize = 30 * 1024 * 1024;
                     httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
                     //httpClient.DefaultRequestHeaders.Add("Content-Length", "100000");
