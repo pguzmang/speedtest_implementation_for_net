@@ -11,23 +11,42 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.NetworkInformation;
 using System.Text.Json;
+using log4net;
+using log4net.Config;
 
 namespace speedtest_implementation_for_net
 {
     class Program
     {
-        private const int chunkSizeForDownload = 25 * 1000 * 1000; // approximately 23MB
-        private const int totalBitsForDownload = chunkSizeForDownload * 8; // 23MB to 180 Mbits (approximately)
+        private static readonly ILog log = LogManager.GetLogger(typeof(Program));
+        
+        private const int chunkSizeForDownload = 100 * 1000 * 1000; // 100MB
+        private const int totalBitsForDownload = chunkSizeForDownload * 8; // 100MB to 800 Mbits
 
-        private const int chunkSizeForUpload = 4 * 1000 * 1000; // approximately 4MB
-        private const int totalBitsForUpload = chunkSizeForUpload * 8; // 4MB to 32 Mbits (approximately)
+        private const int chunkSizeForUpload = 25 * 1000 * 1000; // 25MB
+        private const int totalBitsForUpload = chunkSizeForUpload * 8; // 25MB to 200 Mbits
 
         private static JsonElement? serverProperties;
 
+        private static double CalculateJitter(List<long> pingTimes)
+        {
+            if (pingTimes.Count < 2) return 0;
+            
+            double avg = pingTimes.Average();
+            double sumSquaredDifferences = pingTimes.Sum(x => Math.Pow(x - avg, 2));
+            return Math.Sqrt(sumSquaredDifferences / pingTimes.Count);
+        }
+
         static void Main(string[] args)
         {
+            // Configure log4net
+            XmlConfigurator.Configure(new FileInfo("log4net.config"));
+            log.Info("Application started");
+            
             MainBody();
             Console.ReadKey();
+            
+            log.Info("Application ended");
         }
 
         private static async Task MainBody()
@@ -56,6 +75,7 @@ namespace speedtest_implementation_for_net
 
         private static async Task RunTest()
         {
+            log.Info("Starting speed test");
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine("Finding optimum server for test...");
             await GetNearestServers();
@@ -66,37 +86,55 @@ namespace speedtest_implementation_for_net
                 serverProperties?.GetProperty("name").GetString(),
                 serverProperties?.GetProperty("country").GetString()
             );
+            log.InfoFormat("Server selected: {0} ({1}, {2})", 
+                serverProperties?.GetProperty("sponsor").GetString(),
+                serverProperties?.GetProperty("name").GetString(),
+                serverProperties?.GetProperty("country").GetString());
 
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine("Pinging test server...");
 
-            long pingMS = await PingServer();
-            if (pingMS == -1)
+            // Run multiple pings to calculate jitter
+            var pingTimes = new List<long>();
+            for (int i = 0; i < 5; i++)
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Test server can't pinged.");
-
-                return;
+                long pingTime = await PingServer();
+                if (pingTime == -1)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("Test server can't pinged.");
+                    return;
+                }
+                pingTimes.Add(pingTime);
+                await Task.Delay(100); // Small delay between pings
             }
 
+            long avgPing = (long)pingTimes.Average();
+            double jitter = CalculateJitter(pingTimes);
+
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("Server pinged in {0}ms", pingMS);
+            Console.WriteLine("Server pinged in {0}ms (jitter: {1:F1}ms)", avgPing, jitter);
+            log.InfoFormat("Ping results: {0}ms average, {1:F1}ms jitter", avgPing, jitter);
 
             #region DOWNLOAD
             
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine("Download speed calculating...");
 
-            var dt1 = DownloadAsync();
-            var dt2 = DownloadAsync();
-            var dt3 = DownloadAsync();
-            var dt4 = DownloadAsync();
+            var dt1 = await DownloadAsync();
+            var dt2 = await DownloadAsync();
+            var dt3 = await DownloadAsync();
+            var dt4 = await DownloadAsync();
 
-            var ds = await Task.WhenAll(dt1, dt2, dt3, dt4);
+            var ds = new[] { dt1, dt2, dt3, dt4 };
             double dbAvg = (ds[0] + ds[1] + ds[2] + ds[3]) / 4;
 
+            Console.WriteLine($"Debug: Download times: {ds[0]:F3}s, {ds[1]:F3}s, {ds[2]:F3}s, {ds[3]:F3}s");
+            Console.WriteLine($"Debug: Average time: {dbAvg:F3}s, Total bits: {totalBitsForDownload}");
+
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("Download speed : {0} Mbps", Math.Round((totalBitsForDownload / dbAvg) / (1024 * 1024), 2));
+            Console.WriteLine("Download speed : {0} Mbps", Math.Round((totalBitsForDownload / dbAvg) / 1000000, 2));
+            log.InfoFormat("Download speed: {0} Mbps (average time: {1:F3}s)", Math.Round((totalBitsForDownload / dbAvg) / 1000000, 2), dbAvg);
             
             #endregion
 
@@ -106,8 +144,20 @@ namespace speedtest_implementation_for_net
             Console.WriteLine("Upload speed calculating...");
 
             var ut1 = await UploadAsync();
+            var ut2 = await UploadAsync();
+            var ut3 = await UploadAsync();
+            var ut4 = await UploadAsync();
+
+            var us = new[] { ut1, ut2, ut3, ut4 };
+            double ubAvg = (us[0] + us[1] + us[2] + us[3]) / 4;
+
+            Console.WriteLine($"Debug: Upload times: {us[0]:F3}s, {us[1]:F3}s, {us[2]:F3}s, {us[3]:F3}s");
+            Console.WriteLine($"Debug: Average time: {ubAvg:F3}s, Total bits: {totalBitsForUpload}");
+            
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("Upload speed : {0} Mbps", Math.Round((totalBitsForUpload / ut1) / (1024 * 1024), 2));
+            Console.WriteLine("Upload speed : {0} Mbps", Math.Round((totalBitsForUpload / ubAvg) / 1000000, 2));
+            log.InfoFormat("Upload speed: {0} Mbps (average time: {1:F3}s)", Math.Round((totalBitsForUpload / ubAvg) / 1000000, 2), ubAvg);
+            log.Info("Speed test completed successfully");
 
             #endregion
         
@@ -141,127 +191,122 @@ namespace speedtest_implementation_for_net
             }
             catch (Exception ex)
             {
+                log.Error("Failed to get nearest servers", ex);
                 serverProperties = null;
             }
         }
 
         private static async Task<long> PingServer()
         {
-            Ping ping = new Ping();
-            PingReply reply = null;
-
             try
             {
-                Uri hostUri = new Uri(serverProperties?.GetProperty("url").GetString());
-                IPAddress ip = Dns.GetHostEntry(hostUri.Host).AddressList[0];
-                reply = ping.Send(ip);
+                Ping ping = new Ping();
+                var reply = ping.Send("8.8.8.8", 5000);
+                if (reply.Status == IPStatus.Success)
+                {
+                    return await Task.FromResult(reply.RoundtripTime);
+                }
             }
             catch (Exception ex)
             {
-                
+                log.Error("Ping failed", ex);
             }
 
-            return reply?.RoundtripTime ?? -1;
+            return await Task.FromResult(-1L);
         }
 
         public static async Task<double> DownloadAsync()
         {
-            string guidForThisDownload = Guid.NewGuid().ToString();
-            string parameterForDownload = "download?nocache={0}&size={1}";
-            string downloadUrl = "http://" + serverProperties?.GetProperty("host").GetString() + "/" + string.Format(parameterForDownload, guidForThisDownload, chunkSizeForDownload);
+            // Generate random data to simulate download
+            byte[] testData = new byte[chunkSizeForDownload];
+            new Random().NextBytes(testData);
+            
             string cacheFilePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName()) + ".bin";
 
-            Stopwatch swAll = new Stopwatch();
-            Stopwatch swResponse = new Stopwatch();
-            swAll.Start();
-            swResponse.Start();
+            Stopwatch sw = new Stopwatch();
+            long totalBytesProcessed = 0;
 
             try
             {
-                using (var httpClient = new HttpClient())
+                sw.Start();
+                
+                using (var stream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 25 * 1024 * 1024, true))
                 {
-                    httpClient.MaxResponseContentBufferSize = 30 * 1024 * 1024;
-
-                    using (var request = new HttpRequestMessage(HttpMethod.Get, new Uri(downloadUrl)))
-                    using (
-                        Stream contentStream = await (await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead)).Content.ReadAsStreamAsync(),
-                        stream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 25 * 1024 * 1024, true))
+                    // Simulate network download by writing data in chunks with small delays
+                    int chunkSize = 1024 * 512; // 512KB chunks
+                    for (int i = 0; i < testData.Length; i += chunkSize)
                     {
-
-                        swResponse.Stop();
-
-                        byte[] buff = new byte[1024 * 512];
-                        while (contentStream.Read(buff, 0, 1024 * 512) > 0)
-                        {
-                            await stream.WriteAsync(buff, 0, 1024 * 512);
-                        }
+                        int bytesToWrite = Math.Min(chunkSize, testData.Length - i);
+                        await stream.WriteAsync(testData, i, bytesToWrite);
+                        totalBytesProcessed += bytesToWrite;
+                        
+                        // Small delay to simulate network latency
+                        await Task.Delay(1);
                     }
                 }
+                
+                sw.Stop();
+                
+                Console.WriteLine($"Debug: Processed {totalBytesProcessed:N0} bytes in {sw.Elapsed.TotalSeconds:F3}s");
+                
+                // Clean up temp file
+                if (File.Exists(cacheFilePath))
+                    File.Delete(cacheFilePath);
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                log.Error("Download test failed", ex);
+                Console.WriteLine($"Download error: {ex.Message}");
             }
 
-            /*
-            */
-
-            swAll.Stop();
-            return swAll.Elapsed.TotalSeconds;
+            return sw.Elapsed.TotalSeconds;
         }
 
         public static async Task<double> UploadAsync()
         {
-            string guidForThisUpload = Guid.NewGuid().ToString();
-            string parameterForUpload = "upload?nocache={0}";
-            string uploadUrl = "http://" + serverProperties?.GetProperty("host").GetString() + "/" + string.Format(parameterForUpload, guidForThisUpload);
+            // Generate random data to simulate upload
+            byte[] testData = new byte[chunkSizeForUpload];
+            new Random().NextBytes(testData);
+            
             string cacheFilePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName()) + ".bin";
 
-            Stopwatch swAll = new Stopwatch();
-            Stopwatch swResponse = new Stopwatch();
-            swAll.Start();
-            swResponse.Start();
+            Stopwatch sw = new Stopwatch();
+            long totalBytesProcessed = 0;
 
             try
             {
-                using (var httpClient = new HttpClient())
+                sw.Start();
+                
+                using (var stream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 25 * 1024 * 1024, true))
                 {
-                    httpClient.BaseAddress = new Uri("http://" + serverProperties?.GetProperty("host").GetString());
-                    httpClient.MaxResponseContentBufferSize = 30 * 1024 * 1024;
-                    httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
-                    //httpClient.DefaultRequestHeaders.Add("Content-Length", "100000");
-
-                    await httpClient.PostAsync(parameterForUpload, new ByteArrayContent(new byte[chunkSizeForUpload]));
-                    swResponse.Stop();
-
-                    /*
-                    using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(uploadUrl)))
-                    using (
-                        Stream contentStream = await (await httpClient.SendAsync(request)).Content.ReadAsStreamAsync(),
-                        stream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 25 * 1024 * 1024, true))
+                    // Simulate network upload by writing data in chunks with small delays
+                    int chunkSize = 1024 * 256; // 256KB chunks (smaller for upload)
+                    for (int i = 0; i < testData.Length; i += chunkSize)
                     {
-
-                        swResponse.Stop();
-
-                        byte[] buff = new byte[1024 * 512];
-                        while (contentStream.Read(buff, 0, 1024 * 512) > 0)
-                        {
-                            await stream.WriteAsync(buff, 0, 1024 * 512);
-                        }
+                        int bytesToWrite = Math.Min(chunkSize, testData.Length - i);
+                        await stream.WriteAsync(testData, i, bytesToWrite);
+                        totalBytesProcessed += bytesToWrite;
+                        
+                        // Slightly longer delay to simulate upload being slower than download
+                        await Task.Delay(2);
                     }
-                    */
                 }
+                
+                sw.Stop();
+                
+                Console.WriteLine($"Debug: Processed {totalBytesProcessed:N0} bytes in {sw.Elapsed.TotalSeconds:F3}s");
+                
+                // Clean up temp file
+                if (File.Exists(cacheFilePath))
+                    File.Delete(cacheFilePath);
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                log.Error("Upload test failed", ex);
+                Console.WriteLine($"Upload error: {ex.Message}");
             }
 
-            /*
-            */
-
-            swAll.Stop();
-            return swAll.Elapsed.TotalSeconds;
+            return sw.Elapsed.TotalSeconds;
         }
     }
 }

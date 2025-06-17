@@ -3,7 +3,8 @@
     "allow": [
       "Bash(nuget restore:*)",
       "Bash(msbuild:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }
