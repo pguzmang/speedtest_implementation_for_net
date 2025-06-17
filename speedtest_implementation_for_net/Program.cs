@@ -37,13 +37,13 @@ namespace speedtest_implementation_for_net
             return Math.Sqrt(sumSquaredDifferences / pingTimes.Count);
         }
 
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             // Configure log4net
             XmlConfigurator.Configure(new FileInfo("log4net.config"));
             log.Info("Application started");
             
-            MainBody();
+            await MainBody();
             Console.ReadKey();
             
             log.Info("Application ended");
