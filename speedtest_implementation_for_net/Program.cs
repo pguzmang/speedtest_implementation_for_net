@@ -171,8 +171,6 @@ namespace speedtest_implementation_for_net
             string downloadUrl = "http://" + serverProperties?.GetProperty("host").GetString() + "/" + string.Format(parameterForDownload, guidForThisDownload, chunkSizeForDownload);
             string cacheFilePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName()) + ".bin";
 
-            int LargeBufferSize = 25 * 1024 * 1024;
-
             Stopwatch swAll = new Stopwatch();
             Stopwatch swResponse = new Stopwatch();
             swAll.Start();
@@ -187,7 +185,7 @@ namespace speedtest_implementation_for_net
                     using (var request = new HttpRequestMessage(HttpMethod.Get, new Uri(downloadUrl)))
                     using (
                         Stream contentStream = await (await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead)).Content.ReadAsStreamAsync(),
-                        stream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None, LargeBufferSize, true))
+                        stream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 25 * 1024 * 1024, true))
                     {
 
                         swResponse.Stop();
@@ -209,7 +207,7 @@ namespace speedtest_implementation_for_net
             */
 
             swAll.Stop();
-            return swAll.Elapsed.Seconds;
+            return swAll.Elapsed.TotalSeconds;
         }
 
         public static async Task<double> UploadAsync()
@@ -218,8 +216,6 @@ namespace speedtest_implementation_for_net
             string parameterForUpload = "upload?nocache={0}";
             string uploadUrl = "http://" + serverProperties?.GetProperty("host").GetString() + "/" + string.Format(parameterForUpload, guidForThisUpload);
             string cacheFilePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.IO.Path.GetRandomFileName()) + ".bin";
-
-            int LargeBufferSize = 25 * 1024 * 1024;
 
             Stopwatch swAll = new Stopwatch();
             Stopwatch swResponse = new Stopwatch();
@@ -235,17 +231,14 @@ namespace speedtest_implementation_for_net
                     httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
                     //httpClient.DefaultRequestHeaders.Add("Content-Length", "100000");
 
-                    using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(uploadUrl)))
-                    {
-                        await httpClient.PostAsync(parameterForUpload, new ByteArrayContent(new byte[chunkSizeForUpload]));
-                        swResponse.Stop();
-                    }
+                    await httpClient.PostAsync(parameterForUpload, new ByteArrayContent(new byte[chunkSizeForUpload]));
+                    swResponse.Stop();
 
                     /*
                     using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(uploadUrl)))
                     using (
                         Stream contentStream = await (await httpClient.SendAsync(request)).Content.ReadAsStreamAsync(),
-                        stream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None, LargeBufferSize, true))
+                        stream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 25 * 1024 * 1024, true))
                     {
 
                         swResponse.Stop();
@@ -268,7 +261,7 @@ namespace speedtest_implementation_for_net
             */
 
             swAll.Stop();
-            return swAll.Elapsed.Seconds;
+            return swAll.Elapsed.TotalSeconds;
         }
     }
 }
